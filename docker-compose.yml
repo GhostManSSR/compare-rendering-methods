@@ -1,0 +1,71 @@
+services:
+  catalog-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.catalog
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  react:
+    build:
+      context: .
+      dockerfile: Dockerfile.react
+      args:
+        APP_BASE: /react/
+    environment:
+      CATALOG_API_URL: http://catalog-api:3000/products?limit=12&select=id,title,description,price,rating,brand,category,thumbnail
+    depends_on:
+      catalog-api:
+        condition: service_healthy
+
+  vue:
+    build:
+      context: .
+      dockerfile: Dockerfile.vue
+      args:
+        APP_BASE: /vue/
+    environment:
+      CATALOG_API_URL: http://catalog-api:3000/products?limit=12&select=id,title,description,price,rating,brand,category,thumbnail
+    depends_on:
+      catalog-api:
+        condition: service_healthy
+
+  angular:
+    build:
+      context: .
+      dockerfile: Dockerfile.angular
+    environment:
+      CATALOG_API_URL: http://catalog-api:3000/products?limit=12&select=id,title,description,price,rating,brand,category,thumbnail
+      NG_ALLOWED_HOSTS: ${NG_ALLOWED_HOSTS:-localhost,127.0.0.1,benchmark}
+    depends_on:
+      catalog-api:
+        condition: service_healthy
+
+  benchmark:
+    image: nginx:1.27-alpine
+    ports:
+      - "${BENCHMARK_PORT:-8080}:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - react
+      - vue
+      - angular
+      - catalog-api
+
+  lighthouse-runner:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: Dockerfile.lighthouse
+    environment:
+      BENCHMARK_RUNS: ${BENCHMARK_RUNS:-5}
+      BENCHMARK_FRAMEWORKS: ${BENCHMARK_FRAMEWORKS:-react,vue,angular}
+      BENCHMARK_MODES: ${BENCHMARK_MODES:-csr,ssr,ssg}
+    volumes:
+      - ./artifacts:/workspace/artifacts
+    depends_on:
+      - benchmark
