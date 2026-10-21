@@ -1,0 +1,33 @@
+{
+  "ci": {
+    "collect": {
+      "url": [
+        "http://benchmark/react/csr",
+        "http://benchmark/react/ssr",
+        "http://benchmark/react/ssg",
+        "http://benchmark/vue/csr",
+        "http://benchmark/vue/ssr",
+        "http://benchmark/vue/ssg",
+        "http://benchmark/angular/csr",
+        "http://benchmark/angular/ssr",
+        "http://benchmark/angular/ssg"
+      ],
+      "numberOfRuns": 5,
+      "settings": {
+        "chromeFlags": "--no-sandbox --disable-dev-shm-usage",
+        "formFactor": "mobile",
+        "throttlingMethod": "simulate"
+      }
+    },
+    "assert": {
+      "assertions": {
+        "categories:performance": ["warn", { "minScore": 0.5 }],
+        "largest-contentful-paint": ["warn", { "maxNumericValue": 5000 }]
+      }
+    },
+    "upload": {
+      "target": "filesystem",
+      "outputDir": "./artifacts/lhci"
+    }
+  }
+}

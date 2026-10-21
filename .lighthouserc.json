@@ -1,0 +1,33 @@
+{
+  "ci": {
+    "collect": {
+      "url": [
+        "http://localhost:8080/react/csr",
+        "http://localhost:8080/react/ssr",
+        "http://localhost:8080/react/ssg",
+        "http://localhost:8080/vue/csr",
+        "http://localhost:8080/vue/ssr",
+        "http://localhost:8080/vue/ssg",
+        "http://localhost:8080/angular/csr",
+        "http://localhost:8080/angular/ssr",
+        "http://localhost:8080/angular/ssg"
+      ],
+      "numberOfRuns": 5,
+      "settings": {
+        "chromeFlags": "--no-sandbox --disable-dev-shm-usage",
+        "formFactor": "mobile",
+        "throttlingMethod": "simulate"
+      }
+    },
+    "assert": {
+      "assertions": {
+        "categories:performance": ["warn", { "minScore": 0.5 }],
+        "largest-contentful-paint": ["warn", { "maxNumericValue": 5000 }]
+      }
+    },
+    "upload": {
+      "target": "filesystem",
+      "outputDir": "./artifacts/lhci"
+    }
+  }
+}
