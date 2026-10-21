@@ -1,0 +1,17 @@
+FROM node:22-alpine AS build
+WORKDIR /workspace
+COPY apps-angular/package*.json ./apps-angular/
+RUN cd apps-angular && npm ci
+COPY apps-angular ./apps-angular
+COPY data/products.json ./data/products.json
+ENV CATALOG_FILE=/workspace/data/products.json
+RUN cd apps-angular && npm run build -- --base-href /angular/
+
+FROM node:22-alpine AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+ENV PORT=4000
+COPY --from=build /workspace/apps-angular/package.json ./
+COPY --from=build /workspace/apps-angular/node_modules ./node_modules
+COPY --from=build /workspace/apps-angular/dist ./dist
+CMD ["node", "dist/angular-app/server/server.mjs"]
