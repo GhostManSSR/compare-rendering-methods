@@ -1,0 +1,77 @@
+
+name: Lighthouse benchmark
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "apps-angular/**"
+      - "apps-react/**"
+      - "apps-vue/**"
+      - "data/**"
+      - "scripts/**"
+      - "Dockerfile.*"
+      - "docker-compose.yml"
+      - "nginx.conf"
+      - ".lighthouserc.json"
+      - ".lighthouserc.docker.json"
+      - "package-lock.json"
+      - "package.json"
+      - ".github/workflows/lighthouse.yml"
+
+jobs:
+  lighthouse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and start applications
+        run: docker compose up --build -d
+
+      - name: Check deployment
+        run: npm run benchmark:check
+
+      - name: Build Lighthouse runner
+        run: docker compose --profile tools build lighthouse-runner
+
+      - name: Run Lighthouse benchmark
+        run: npm run benchmark:lighthouse:docker
+
+      - name: Run Lighthouse CI
+        run: npm run benchmark:lhci:docker
+
+      - name: Upload Lighthouse benchmark reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-benchmark
+          path: artifacts/lighthouse/
+          if-no-files-found: warn
+
+      - name: Upload Lighthouse CI reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-ci
+          path: artifacts/lhci/
+          if-no-files-found: warn
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker compose logs --tail=100
+
+      - name: Stop containers
+        if: always()
+        run: docker compose down
