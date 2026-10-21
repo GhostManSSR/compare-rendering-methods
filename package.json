@@ -1,0 +1,23 @@
+{
+  "name": "rendering-lcp-benchmark",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "benchmark:up": "docker compose up --build -d",
+    "benchmark:down": "docker compose down",
+    "benchmark:check": "node scripts/check-deployment.mjs",
+    "benchmark:lighthouse": "node scripts/benchmark-lighthouse.mjs",
+    "benchmark:lighthouse:docker": "docker compose --profile tools run --rm lighthouse-runner",
+    "benchmark:lhci": "lhci autorun",
+    "benchmark:lhci:container": "lhci autorun --config=.lighthouserc.docker.json",
+    "benchmark:lhci:docker": "docker compose --profile tools run --rm -e BENCHMARK_TOOL=lhci lighthouse-runner",
+    "benchmark:pagespeed": "node scripts/pagespeed.mjs",
+    "benchmark:webpagetest": "node scripts/webpagetest.mjs",
+    "catalog:update": "node scripts/update-catalog.mjs"
+  },
+  "devDependencies": {
+    "@lhci/cli": "^0.15.1",
+    "chrome-launcher": "^1.2.2",
+    "lighthouse": "^12.8.2"
+  }
+}
