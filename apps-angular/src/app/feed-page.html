@@ -1,0 +1,51 @@
+<main class="page">
+  <header class="topbar">
+    <a class="brand" href="csr" aria-label="Market home">market<span>lab</span></a>
+    <nav aria-label="Rendering modes">
+      <a [class.active]="mode === 'csr'" href="csr">CSR</a>
+      <a [class.active]="mode === 'ssr'" href="ssr">SSR</a>
+      <a [class.active]="mode === 'ssg'" href="ssg">SSG</a>
+    </nav>
+    <span class="framework">Angular · {{ mode.toUpperCase() }}</span>
+  </header>
+  <section class="intro">
+    <p class="eyebrow">TODAY'S PICKS · FREE DELIVERY</p>
+    <h1>Find your next favorite.</h1>
+    <p class="subtitle">Fresh finds from brands you'll love.</p>
+  </section>
+  @if (error()) {
+    <p class="error" role="alert">Could not load the catalog: {{ error() }}</p>
+  } @else if (!products().length) {
+    <p class="loading" aria-live="polite">Loading the catalog…</p>
+  } @else {
+    <section class="catalog" aria-label="Marketplace products">
+      @for (product of products(); track product.id; let index = $index) {
+        <article class="card">
+          <div class="image-wrap">
+            <img
+              [src]="product.thumbnail"
+              [alt]="product.title"
+              width="320"
+              height="240"
+              [attr.loading]="index === 0 ? 'eager' : 'lazy'"
+              [attr.fetchpriority]="index === 0 ? 'high' : 'auto'"
+            />
+            @if (index === 0) {
+              <span class="badge">BESTSELLER</span>
+            }
+          </div>
+          <div class="card-info">
+            <p class="category">{{ product.category }}</p>
+            <h2>{{ product.title }}</h2>
+            <p class="description">{{ product.description }}</p>
+            <div class="card-bottom">
+              <strong>{{ product.price | currency }}</strong>
+              <span class="rating">★ {{ product.rating | number: '1.1-1' }}</span>
+            </div>
+          </div>
+        </article>
+      }
+    </section>
+  }
+  <footer>Same catalog, same images, same viewport — only the render strategy changes.</footer>
+</main>
