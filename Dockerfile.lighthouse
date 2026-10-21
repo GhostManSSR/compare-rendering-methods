@@ -1,0 +1,14 @@
+FROM node:22-bookworm
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends chromium \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /workspace
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY scripts ./scripts
+COPY .lighthouserc.json ./
+COPY .lighthouserc.docker.json ./
+ENV CHROME_PATH=/usr/bin/chromium
+ENV BENCHMARK_BASE_URL=http://benchmark
+ENV BENCHMARK_OUTPUT_DIR=/workspace/artifacts/lighthouse
+CMD ["sh", "-c", "npm run benchmark:check && if [ \"$BENCHMARK_TOOL\" = \"lhci\" ]; then npm run benchmark:lhci:container; else npm run benchmark:lighthouse; fi"]
