@@ -1,9 +1,16 @@
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
+import {
+    networkProfiles,
+    workloadProfiles,
+    workloadMetadata,
+} from './benchmark-workloads.mjs'
 
 const allFrameworks = ['react', 'vue', 'angular']
 const allModes = ['csr', 'ssr', 'ssg']
+const allNetworkProfiles = Object.keys(networkProfiles)
+const allWorkloads = Object.keys(workloadProfiles)
 
 const frameworks = (
     process.env.BENCHMARK_FRAMEWORKS?.split(',') ?? allFrameworks
@@ -13,7 +20,15 @@ const modes = (
     process.env.BENCHMARK_MODES?.split(',') ?? allModes
 ).map((value) => value.trim())
 
-const runs = Number(process.env.BENCHMARK_RUNS || 5)
+const selectedNetworkProfiles = (
+    process.env.BENCHMARK_NETWORK_PROFILES?.split(',') ?? allNetworkProfiles
+).map((value) => value.trim())
+
+const workloads = (
+    process.env.BENCHMARK_WORKLOADS?.split(',') ?? allWorkloads
+).map((value) => value.trim())
+
+const runs = Number(process.env.BENCHMARK_RUNS || 20)
 
 const baseUrl = (
     process.env.BENCHMARK_BASE_URL || 'http://localhost:8080'
@@ -24,9 +39,10 @@ const outputDir = resolve(
 )
 
 const reuseReports = process.env.BENCHMARK_REUSE_REPORTS === 'true'
+const resumeReports = process.env.BENCHMARK_RESUME === 'true'
 
-if (!Number.isInteger(runs) || runs < 5 || runs > 10) {
-    throw new Error('BENCHMARK_RUNS must be an integer from 5 to 10')
+if (!Number.isInteger(runs) || runs < 1 || runs > 100) {
+    throw new Error('BENCHMARK_RUNS must be an integer from 1 to 100')
 }
 
 if (
@@ -46,6 +62,36 @@ if (
         `BENCHMARK_MODES must contain values from: ${allModes.join(', ')}`
     )
 }
+
+if (
+    selectedNetworkProfiles.length === 0 ||
+    selectedNetworkProfiles.some(
+        (profile) => !allNetworkProfiles.includes(profile)
+    )
+) {
+    throw new Error(
+        `BENCHMARK_NETWORK_PROFILES must contain values from: ${allNetworkProfiles.join(', ')}`
+    )
+}
+
+if (
+    workloads.length === 0 ||
+    workloads.some((workload) => !allWorkloads.includes(workload))
+) {
+    throw new Error(
+        `BENCHMARK_WORKLOADS must contain values from: ${allWorkloads.join(', ')}`
+    )
+}
+
+console.log(
+    `Planned Lighthouse runs: ${
+        frameworks.length *
+        modes.length *
+        selectedNetworkProfiles.length *
+        workloads.length *
+        runs
+    }`
+)
 
 await mkdir(outputDir, { recursive: true })
 
@@ -162,16 +208,30 @@ function getApiLatency(requests) {
     }
 }
 
-function createSample(report, framework, mode, run, url) {
+function createSample(
+    report,
+    framework,
+    mode,
+    networkProfile,
+    workload,
+    run,
+    url
+) {
     const requests =
         report.audits?.['network-requests']
             ?.details?.items ?? []
 
     const api = getApiLatency(requests)
+    const network = networkProfiles[networkProfile]
 
     return {
         framework,
         mode,
+        networkProfile,
+        networkRttMs: network.rttMs,
+        networkThroughputKbps: network.throughputKbps,
+        workload,
+        ...workloadMetadata(workload),
         run,
         url,
 
@@ -179,12 +239,18 @@ function createSample(report, framework, mode, run, url) {
         ttfbMs: auditValue(report, 'server-response-time'),
         fcpMs: auditValue(report, 'first-contentful-paint'),
         tbtMs: auditValue(report, 'total-blocking-time'),
+        domNodes: auditValue(report, 'dom-size'),
 
         requestCount: requests.length,
 
         jsTransferBytes: sumTransfer(
             requests,
             (request) => request.resourceType === 'Script'
+        ),
+
+        imageTransferBytes: sumTransfer(
+            requests,
+            (request) => request.resourceType === 'Image'
         ),
 
         htmlTransferBytes: sumTransfer(
@@ -202,7 +268,24 @@ function createSample(report, framework, mode, run, url) {
     }
 }
 
-async function runLighthouse(url, lighthouse, launch) {
+function assertAppliedNetworkSettings(report, network, url) {
+    const appliedSettings = report.configSettings
+    if (appliedSettings?.throttlingMethod !== 'devtools') {
+        throw new Error(
+            `Lighthouse did not apply DevTools throttling for ${url}`
+        )
+    }
+
+    for (const [setting, expectedValue] of Object.entries(network)) {
+        if (appliedSettings.throttling?.[setting] !== expectedValue) {
+            throw new Error(
+                `Lighthouse did not apply ${setting}=${expectedValue} for ${url}`
+            )
+        }
+    }
+}
+
+async function runLighthouse(url, network, lighthouse, launch) {
     const chrome = await launch({
         ...(chromePath ? { chromePath } : {}),
         chromeFlags: [
@@ -219,6 +302,9 @@ async function runLighthouse(url, lighthouse, launch) {
             output: 'json',
             onlyCategories: ['performance'],
             disableStorageReset: false,
+            formFactor: 'mobile',
+            throttlingMethod: 'devtools',
+            throttling: network,
         })
 
         if (!result?.lhr) {
@@ -239,6 +325,30 @@ async function runLighthouse(url, lighthouse, launch) {
     }
 }
 
+async function writeJsonAtomically(path, value) {
+    const temporaryPath = `${path}.${process.pid}.tmp`
+    const contents = JSON.stringify(value, null, 2)
+
+    for (let attempt = 1; attempt <= 4; attempt++) {
+        try {
+            await writeFile(temporaryPath, contents)
+            await rename(temporaryPath, path)
+            return
+        } catch (error) {
+            if (
+                attempt === 4 ||
+                !['EIO', 'EBUSY', 'EPERM', 'ENOSPC'].includes(error.code)
+            ) {
+                throw error
+            }
+            console.warn(
+                `Write failed for ${path} (${error.code}); retrying ${attempt}/3`
+            )
+            await new Promise((resolve) => setTimeout(resolve, attempt * 1000))
+        }
+    }
+}
+
 let lighthouse
 let launch
 
@@ -254,134 +364,233 @@ const samples = []
 
 for (const framework of frameworks) {
     for (const mode of modes) {
-        const url = `${baseUrl}/${framework}/${mode}`
+        for (const networkProfile of selectedNetworkProfiles) {
+            for (const workload of workloads) {
+                const url = new URL(`${baseUrl}/${framework}/${mode}`)
+                url.searchParams.set('networkProfile', networkProfile)
+                url.searchParams.set('workload', workload)
 
-        for (let run = 1; run <= runs; run++) {
-            const filename = `${framework}-${mode}-${run}.json`
-            const reportPath = resolve(outputDir, filename)
+                for (let run = 1; run <= runs; run++) {
+                    const filename =
+                        `${framework}-${mode}-${networkProfile}-${workload}-${run}.json`
+                    const reportPath = resolve(outputDir, filename)
 
-            let report
+                    let report
 
-            if (reuseReports) {
-                console.log(
-                    `Reading ${framework}/${mode}: run ${run}/${runs}`
-                )
+                    if (reuseReports) {
+                        console.log(
+                            `Reading ${framework}/${mode}/${networkProfile}/${workload}: run ${run}/${runs}`
+                        )
 
-                report = JSON.parse(
-                    await readFile(reportPath, 'utf8')
-                )
-            } else {
-                console.log(
-                    `Lighthouse ${framework}/${mode}: run ${run}/${runs}`
-                )
+                        report = JSON.parse(
+                            await readFile(reportPath, 'utf8')
+                        )
+                    } else if (resumeReports) {
+                        try {
+                            const existingReport = JSON.parse(
+                                await readFile(reportPath, 'utf8')
+                            )
+                            assertAppliedNetworkSettings(
+                                existingReport,
+                                networkProfiles[networkProfile],
+                                url.toString()
+                            )
+                            if (
+                                !Number.isFinite(
+                                    existingReport.audits?.[
+                                        'largest-contentful-paint'
+                                    ]?.numericValue
+                                )
+                            ) {
+                                throw new Error(
+                                    'Report has no numeric LCP audit'
+                                )
+                            }
+                            report = existingReport
+                            console.log(
+                                `Resuming: keeping valid ${framework}/${mode}/${networkProfile}/${workload} run ${run}/${runs}`
+                            )
+                        } catch (error) {
+                            if (
+                                error.code !== 'ENOENT' &&
+                                !(error instanceof SyntaxError) &&
+                                !error.message.startsWith(
+                                    'Lighthouse did not apply '
+                                ) &&
+                                error.message !== 'Report has no numeric LCP audit'
+                            ) {
+                                throw error
+                            }
+                            if (error.code !== 'ENOENT') {
+                                console.warn(
+                                    `Re-running invalid report ${filename}: ${error.message}`
+                                )
+                            }
+                        }
+                    }
 
-                report = await runLighthouse(
-                    url,
-                    lighthouse,
-                    launch
-                )
+                    if (!report) {
+                        if (!reuseReports) {
+                            console.log(
+                                `Lighthouse ${framework}/${mode}/${networkProfile}/${workload}: run ${run}/${runs}`
+                            )
 
-                await writeFile(
-                    reportPath,
-                    JSON.stringify(report, null, 2)
-                )
+                            report = await runLighthouse(
+                                url.toString(),
+                                networkProfiles[networkProfile],
+                                lighthouse,
+                                launch
+                            )
+                        } else {
+                            throw new Error(
+                                `No reusable report found at ${reportPath}`
+                            )
+                        }
+                    } else {
+                        console.log(`Using saved report: ${filename}`)
+                    }
+
+                    assertAppliedNetworkSettings(
+                        report,
+                        networkProfiles[networkProfile],
+                        url.toString()
+                    )
+
+                    if (!reuseReports) {
+                        await writeJsonAtomically(reportPath, report)
+                    }
+
+                    const sample = createSample(
+                        report,
+                        framework,
+                        mode,
+                        networkProfile,
+                        workload,
+                        run,
+                        url.toString()
+                    )
+
+                    samples.push(sample)
+
+                    console.log({
+                        lcpMs: sample.lcpMs,
+                        fcpMs: sample.fcpMs,
+                        tbtMs: sample.tbtMs,
+                        jsTransferBytes: sample.jsTransferBytes,
+                        imageTransferBytes: sample.imageTransferBytes,
+                        domNodes: sample.domNodes,
+                    })
+                }
             }
-
-            const sample = createSample(
-                report,
-                framework,
-                mode,
-                run,
-                url
-            )
-
-            samples.push(sample)
-
-            console.log({
-                lcpMs: sample.lcpMs,
-                fcpMs: sample.fcpMs,
-                tbtMs: sample.tbtMs,
-                apiRequestCount: sample.apiRequestCount,
-                apiLatencyMs: sample.apiLatencyMs,
-                lcpElement: sample.lcpElement,
-            })
         }
     }
 }
 
 const summary = frameworks.flatMap((framework) =>
-    modes.map((mode) => {
-        const group = samples.filter(
-            (sample) =>
-                sample.framework === framework &&
-                sample.mode === mode
+    modes.flatMap((mode) =>
+        selectedNetworkProfiles.flatMap((networkProfile) =>
+            workloads.map((workload) => {
+                const group = samples.filter(
+                    (sample) =>
+                        sample.framework === framework &&
+                        sample.mode === mode &&
+                        sample.networkProfile === networkProfile &&
+                        sample.workload === workload
+                )
+
+                const lcpElements = group
+                    .map((sample) => sample.lcpElement)
+                    .filter(Boolean)
+
+                const lcpCounts = new Map()
+
+                for (const element of lcpElements) {
+                    lcpCounts.set(
+                        element,
+                        (lcpCounts.get(element) ?? 0) + 1
+                    )
+                }
+
+                const mostCommonLcpElement = [...lcpCounts.entries()]
+                    .sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
+
+                return {
+                    framework,
+                    mode,
+                    networkProfile,
+                    networkRttMs: networkProfiles[networkProfile].rttMs,
+                    networkThroughputKbps:
+                        networkProfiles[networkProfile].throughputKbps,
+                    workload,
+                    runs: group.length,
+
+                    lcpMedianMs: median(
+                        group.map((sample) => sample.lcpMs)
+                    ),
+
+                    ttfbMedianMs: median(
+                        group.map((sample) => sample.ttfbMs)
+                    ),
+
+                    fcpMedianMs: median(
+                        group.map((sample) => sample.fcpMs)
+                    ),
+
+                    tbtMedianMs: median(
+                        group.map((sample) => sample.tbtMs)
+                    ),
+
+                    requestsMedian: median(
+                        group.map((sample) => sample.requestCount)
+                    ),
+
+                    jsTransferMedianBytes: median(
+                        group.map((sample) => sample.jsTransferBytes)
+                    ),
+
+                    imageTransferMedianBytes: median(
+                        group.map((sample) => sample.imageTransferBytes)
+                    ),
+
+                    htmlTransferMedianBytes: median(
+                        group.map((sample) => sample.htmlTransferBytes)
+                    ),
+
+                    domNodesMedian: median(
+                        group.map((sample) => sample.domNodes)
+                    ),
+
+                    apiRequestCountMedian: median(
+                        group.map((sample) => sample.apiRequestCount)
+                    ),
+
+                    apiLatencyMedianMs: median(
+                        group.map((sample) => sample.apiLatencyMs)
+                    ),
+
+                    syntheticJsBytes: group[0]?.syntheticJsBytes ?? null,
+                    catalogItems: group[0]?.catalogItems ?? null,
+                    syntheticImageCount: group[0]?.syntheticImageCount ?? null,
+                    syntheticImageBytes: group[0]?.syntheticImageBytes ?? null,
+                    syntheticImagesTotalBytes: group[0]?.syntheticImagesTotalBytes ?? null,
+                    syntheticDomNodes: group[0]?.syntheticDomNodes ?? null,
+                    extraDomCards: group[0]?.extraDomCards ?? null,
+                    imageWidth: group[0]?.imageWidth ?? null,
+                    imageWidth: group[0]?.imageWidth ?? null,
+                    lcpElement: mostCommonLcpElement,
+                }
+            })
         )
-
-        const lcpElements = group
-            .map((sample) => sample.lcpElement)
-            .filter(Boolean)
-
-        const lcpCounts = new Map()
-
-        for (const element of lcpElements) {
-            lcpCounts.set(
-                element,
-                (lcpCounts.get(element) ?? 0) + 1
-            )
-        }
-
-        const mostCommonLcpElement = [...lcpCounts.entries()]
-            .sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
-
-        return {
-            framework,
-            mode,
-            runs: group.length,
-
-            lcpMedianMs: median(
-                group.map((sample) => sample.lcpMs)
-            ),
-
-            ttfbMedianMs: median(
-                group.map((sample) => sample.ttfbMs)
-            ),
-
-            fcpMedianMs: median(
-                group.map((sample) => sample.fcpMs)
-            ),
-
-            tbtMedianMs: median(
-                group.map((sample) => sample.tbtMs)
-            ),
-
-            requestsMedian: median(
-                group.map((sample) => sample.requestCount)
-            ),
-
-            jsTransferMedianBytes: median(
-                group.map((sample) => sample.jsTransferBytes)
-            ),
-
-            htmlTransferMedianBytes: median(
-                group.map((sample) => sample.htmlTransferBytes)
-            ),
-
-            apiRequestCountMedian: median(
-                group.map((sample) => sample.apiRequestCount)
-            ),
-
-            apiLatencyMedianMs: median(
-                group.map((sample) => sample.apiLatencyMs)
-            ),
-
-            lcpElement: mostCommonLcpElement,
-        }
-    })
+    )
 )
 
 const columns = [
     'framework',
     'mode',
+    'networkProfile',
+    'networkRttMs',
+    'networkThroughputKbps',
+    'workload',
     'runs',
     'lcpMedianMs',
     'ttfbMedianMs',
@@ -389,7 +598,18 @@ const columns = [
     'tbtMedianMs',
     'requestsMedian',
     'jsTransferMedianBytes',
+    'imageTransferMedianBytes',
     'htmlTransferMedianBytes',
+    'domNodesMedian',
+    'catalogItems',
+    'syntheticJsBytes',
+    'syntheticImageCount',
+    'syntheticImageBytes',
+    'syntheticImagesTotalBytes',
+    'syntheticDomNodes',
+    'extraDomCards',
+    'imageWidth',
+    'imageWidth',
     'apiRequestCountMedian',
     'apiLatencyMedianMs',
     'lcpElement',
@@ -404,20 +624,20 @@ const csv = [
     ),
 ].join('\n')
 
-await writeFile(
+await writeJsonAtomically(
     resolve(outputDir, 'samples.json'),
-    JSON.stringify(samples, null, 2)
+    samples
 )
 
-await writeFile(
+await writeJsonAtomically(
     resolve(outputDir, 'summary.json'),
-    JSON.stringify(summary, null, 2)
+    summary
 )
 
-await writeFile(
-    resolve(outputDir, 'summary.csv'),
-    `${csv}\n`
-)
+const summaryCsvPath = resolve(outputDir, 'summary.csv')
+const summaryCsvTempPath = `${summaryCsvPath}.${process.pid}.tmp`
+await writeFile(summaryCsvTempPath, `${csv}\n`)
+await rename(summaryCsvTempPath, summaryCsvPath)
 
 console.table(summary)
 
@@ -427,4 +647,7 @@ console.log(
 
 if (reuseReports) {
     console.log('Statistics recalculated from existing JSON reports.')
+}
+if (resumeReports) {
+    console.log('Valid reports were reused; only missing or invalid runs were measured.')
 }
