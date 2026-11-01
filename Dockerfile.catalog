@@ -1,6 +1,7 @@
 FROM node:22-alpine
 WORKDIR /app
 COPY scripts/catalog-server.mjs ./catalog-server.mjs
+COPY scripts/benchmark-workloads.mjs ./benchmark-workloads.mjs
 COPY data/products.json ./data/products.json
 ENV CATALOG_FILE=/app/data/products.json
 ENV PORT=3000
