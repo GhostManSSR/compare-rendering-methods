@@ -1,33 +1,33 @@
-# Сравнение CSR, SSR и SSG: React, Vue и Angular
+# CSR vs. SSR vs. SSG: React, Vue, and Angular
 
-Стенд для измерения производительности девяти вариантов рендеринга каталога из 12 товаров. Все приложения используют одинаковые данные из `data/products.json`, изображения и макет. Production-версии доступны через один Nginx и общий origin.
+A performance benchmarking environment for nine rendering configurations of a product catalog containing 12 products. All applications use the same data from `data/products.json`, identical images, and the same layout. Production builds are served through a single Nginx instance under a shared origin.
 
-## Требования
+## Requirements
 
-- Docker Desktop с Docker Compose
-- Node.js 22 и npm — для локальных команд
+- Docker Desktop with Docker Compose
+- Node.js 22 and npm — for running commands locally
 
-## Запуск
+## Getting Started
 
 ```powershell
 docker compose up --build -d
 ```
 
-Проверка готовности: http://localhost:8080/health
+Health check: [http://localhost:8080/health](http://localhost:8080/health)
 
-| Фреймворк | CSR | SSR | SSG |
+| Framework | CSR | SSR | SSG |
 |---|---|---|---|
 | React | [CSR](http://localhost:8080/react/csr) | [SSR](http://localhost:8080/react/ssr) | [SSG](http://localhost:8080/react/ssg) |
 | Vue | [CSR](http://localhost:8080/vue/csr) | [SSR](http://localhost:8080/vue/ssr) | [SSG](http://localhost:8080/vue/ssg) |
 | Angular | [CSR](http://localhost:8080/angular/csr) | [SSR](http://localhost:8080/angular/ssr) | [SSG](http://localhost:8080/angular/ssg) |
 
-Для остановки:
+To stop the environment:
 
 ```powershell
 docker compose down
 ```
 
-## Измерения Lighthouse
+## Lighthouse Performance Benchmarks
 
 Рекомендуемый способ — Chromium внутри Docker. Он не зависит от локальной установки Chrome и проверяет все сочетания фреймворка, режима рендеринга, сетевого профиля и нагрузки: **9 × 3 × 3 конфигурации с 20 повторами = 1 620 запусков Lighthouse**. Полный эксперимент может выполняться долго.
 
@@ -36,7 +36,7 @@ docker compose --profile tools build lighthouse-runner
 docker compose --profile tools run --rm lighthouse-runner
 ```
 
-По умолчанию результаты сохраняются в `artifacts/lighthouse/`:
+By default, benchmark results are saved to `artifacts/lighthouse/`:
 
 - `react-csr-fast-4g-light-1.json` и аналогичные файлы — полные отчёты отдельных запусков;
 - `samples.json` — метрики каждого запуска;
@@ -59,20 +59,23 @@ $env:BENCHMARK_WORKLOADS = 'light'
 docker compose --profile tools run --rm lighthouse-runner
 ```
 
-После проверки очистите переменные текущей сессии PowerShell при необходимости:
+After benchmarking, you can clear the environment variables from the current PowerShell session:
 
 ```powershell
 Remove-Item Env:BENCHMARK_RUNS, Env:BENCHMARK_FRAMEWORKS, Env:BENCHMARK_MODES, Env:BENCHMARK_NETWORK_PROFILES, Env:BENCHMARK_WORKLOADS -ErrorAction SilentlyContinue
 ```
 
-### Пересчёт без повторных измерений
+### Recalculating Results Without Rerunning Benchmarks
 
 Если полные JSON-отчёты для выбранных факторов уже находятся в `artifacts/lighthouse/`, можно пересчитать сводку после изменения логики извлечения метрик:
 
 ```powershell
 npm ci
+
 $env:BENCHMARK_REUSE_REPORTS = 'true'
+
 npm run benchmark:lighthouse
+
 Remove-Item Env:BENCHMARK_REUSE_REPORTS
 ```
 
@@ -84,21 +87,39 @@ Remove-Item Env:BENCHMARK_REUSE_REPORTS
 
 В WSL из корня проекта запустите `make install`, `make test` и `make run`. Групповая cross-validation формирует прогнозы для всех измерений. Чтобы подключить данные, размещённые вне репозитория, задайте `LIGHTHOUSE_ARTIFACTS_DIR="/mnt/c/Users/<имя-пользователя>/lcp-benchmark-artifacts/lighthouse" make run`; приложение напрямую читает `samples.json` и отображает сводку из `summary.json`. Старые артефакты на 45 запусков в `artifacts/` содержат только legacy-данные.
 
-## Методика сравнения
+The corresponding JSON files must exist for every selected framework, rendering mode, and run number.
 
-| Режим | Как формируется содержимое |
+## Benchmark Methodology
+
+| Rendering Mode | How Content Is Generated |
 |---|---|
-| **CSR** | Браузер загружает JavaScript, получает каталог через API и строит DOM. |
-| **SSR** | Сервер получает данные и возвращает HTML с карточками; затем выполняется гидратация. |
-| **SSG** | HTML с карточками создаётся во время сборки и выдаётся как готовая страница. |
+| **CSR (Client-Side Rendering)** | The browser downloads JavaScript, fetches catalog data through an API, and constructs the DOM. |
+| **SSR (Server-Side Rendering)** | The server retrieves the data and returns HTML containing product cards. The page is subsequently hydrated in the browser. |
+| **SSG (Static Site Generation)** | HTML containing product cards is generated at build time and served as a pre-rendered page. |
 
-Для корректного сравнения используйте одинаковые production-сборки, данные, изображения, условия сети и настройки Lighthouse. Сопоставляйте медианы нескольких запусков, а не единичные результаты. Локальные значения TTFB относятся к Docker-окружению и не характеризуют задержку публичного хостинга.
+To ensure a fair comparison, all configurations should use:
 
-Внешние сервисы PageSpeed Insights и WebPageTest не могут измерять локальный `localhost` или внутренний адрес `http://benchmark`: для них нужен публично доступный сайт.
+- Production builds
+- Identical product data
+- Identical images and layouts
+- Consistent network conditions
+- The same Lighthouse configuration
 
-## Данные каталога
+**Compare median values across multiple runs rather than relying on individual measurements.**
 
-Исходный набор товаров хранится в `data/products.json`. Для его обновления (при наличии установленных npm-зависимостей):
+Local TTFB measurements reflect the Docker environment and should not be interpreted as representative of latency in a publicly hosted production environment.
+
+### External Performance Testing Services
+
+External services such as PageSpeed Insights and WebPageTest cannot benchmark applications running on `localhost` or internal addresses such as `http://benchmark`.
+
+These services require a publicly accessible website.
+
+## Product Catalog Data
+
+The source product dataset is stored in `data/products.json`.
+
+To update the catalog, run the following commands:
 
 ```powershell
 npm ci
@@ -106,4 +127,6 @@ npm run catalog:update
 docker compose up --build -d
 ```
 
-Обновление данных меняет условия эксперимента; сравнивайте только результаты, полученные на одинаковом наборе товаров.
+Updating the catalog changes the experimental conditions.
+
+**For meaningful and reproducible comparisons, only compare benchmark results collected using the same product dataset.**
