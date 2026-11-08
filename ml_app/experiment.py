@@ -6,9 +6,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.feature_selection import mutual_info_regression
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
@@ -36,9 +38,19 @@ NUMERIC_FEATURES = [
     "syntheticDomNodes",
     "domNodes",
     "jsTransferBytes",
+    "cssTransferBytes",
     "imageTransferBytes",
     "htmlTransferBytes",
     "requestCount",
+    "scriptRequestCount",
+    "stylesheetRequestCount",
+    "imageRequestCount",
+    "fontRequestCount",
+    "documentRequestCount",
+    "xhrRequestCount",
+    "fetchRequestCount",
+    "mediaRequestCount",
+    "otherRequestCount",
     "ttfbMs",
     "fcpMs",
     "tbtMs",
@@ -46,6 +58,22 @@ NUMERIC_FEATURES = [
 
 FEATURES = CATEGORICAL_FEATURES + NUMERIC_FEATURES
 TARGET = "lcpMs"
+
+ANALYSIS_FEATURES = [
+    "jsTransferBytes",
+    "cssTransferBytes",
+    "domNodes",
+    "requestCount",
+    "scriptRequestCount",
+    "stylesheetRequestCount",
+    "imageRequestCount",
+    "fontRequestCount",
+    "documentRequestCount",
+    "xhrRequestCount",
+    "fetchRequestCount",
+    "mediaRequestCount",
+    "otherRequestCount",
+]
 
 NETWORK_METADATA = {
     "fast-4g": (20, 10240),
@@ -56,6 +84,17 @@ WORKLOAD_METADATA = {
     "light": (0, 0, 0, 0, 0),
     "medium": (24, 24000, 6, 16000, 79),
     "heavy": (60, 96000, 24, 64000, 205),
+}
+RESOURCE_TYPES = {
+    "Script",
+    "Stylesheet",
+    "Image",
+    "Font",
+    "Document",
+    "XHR",
+    "Fetch",
+    "Media",
+    "Other",
 }
 
 
@@ -95,12 +134,28 @@ def _sample_from_record(record: dict[str, Any]) -> dict[str, Any] | None:
         "syntheticDomNodes": ("syntheticDomNodes",),
         "domNodes": ("domNodes", "domNodesMedian"),
         "jsTransferBytes": ("jsTransferBytes", "jsTransferMedianBytes"),
+        "cssTransferBytes": ("cssTransferBytes", "cssTransferMedianBytes"),
         "imageTransferBytes": (
             "imageTransferBytes",
             "imageTransferMedianBytes",
         ),
         "htmlTransferBytes": ("htmlTransferBytes", "htmlTransferMedianBytes"),
         "requestCount": ("requestCount", "requestsMedian"),
+        "scriptRequestCount": ("scriptRequestCount", "scriptRequestsMedian"),
+        "stylesheetRequestCount": (
+            "stylesheetRequestCount",
+            "stylesheetRequestsMedian",
+        ),
+        "imageRequestCount": ("imageRequestCount", "imageRequestsMedian"),
+        "fontRequestCount": ("fontRequestCount", "fontRequestsMedian"),
+        "documentRequestCount": (
+            "documentRequestCount",
+            "documentRequestsMedian",
+        ),
+        "xhrRequestCount": ("xhrRequestCount", "xhrRequestsMedian"),
+        "fetchRequestCount": ("fetchRequestCount", "fetchRequestsMedian"),
+        "mediaRequestCount": ("mediaRequestCount", "mediaRequestsMedian"),
+        "otherRequestCount": ("otherRequestCount", "otherRequestsMedian"),
         "ttfbMs": ("ttfbMs", "ttfbMedianMs"),
         "fcpMs": ("fcpMs", "fcpMedianMs"),
         "tbtMs": ("tbtMs", "tbtMedianMs"),
@@ -183,7 +238,37 @@ def _report_to_record(report: dict[str, Any]) -> dict[str, Any]:
         "tbtMs": metric("total-blocking-time"),
         "domNodes": metric("dom-size"),
         "requestCount": len(requests),
+        "scriptRequestCount": sum(
+            request.get("resourceType") == "Script" for request in requests
+        ),
+        "stylesheetRequestCount": sum(
+            request.get("resourceType") == "Stylesheet" for request in requests
+        ),
+        "imageRequestCount": sum(
+            request.get("resourceType") == "Image" for request in requests
+        ),
+        "fontRequestCount": sum(
+            request.get("resourceType") == "Font" for request in requests
+        ),
+        "documentRequestCount": sum(
+            request.get("resourceType") == "Document" for request in requests
+        ),
+        "xhrRequestCount": sum(
+            request.get("resourceType") == "XHR" for request in requests
+        ),
+        "fetchRequestCount": sum(
+            request.get("resourceType") == "Fetch" for request in requests
+        ),
+        "mediaRequestCount": sum(
+            request.get("resourceType") == "Media" for request in requests
+        ),
+        "otherRequestCount": sum(
+            request.get("resourceType") not in RESOURCE_TYPES
+            or request.get("resourceType") == "Other"
+            for request in requests
+        ),
         "jsTransferBytes": transfer("Script"),
+        "cssTransferBytes": transfer("Stylesheet"),
         "imageTransferBytes": transfer("Image"),
         "htmlTransferBytes": transfer("Document"),
         "catalogItems": 12,
@@ -242,6 +327,80 @@ def load_json_files(files: list[tuple[str, bytes]]) -> tuple[pd.DataFrame, int]:
         else:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
     return frame, skipped
+
+
+def _mutual_information(feature: pd.Series, target: pd.Series) -> float:
+    values = pd.to_numeric(feature, errors="coerce")
+    valid = values.notna() & target.notna()
+    x = values[valid].to_numpy(dtype=float)
+    y = target[valid].to_numpy(dtype=float)
+    if len(x) < 4:
+        return float("nan")
+    if np.ptp(x) == 0:
+        return 0.0
+    score = mutual_info_regression(
+        x.reshape(-1, 1),
+        y,
+        n_neighbors=min(3, len(x) - 1),
+        random_state=42,
+    )[0]
+    return float(score)
+
+
+def mutual_information_by_mode(frame: pd.DataFrame) -> pd.DataFrame:
+    modes = sorted(frame["mode"].dropna().astype(str).unique())
+    columns = ["feature", "all", *modes]
+    rows = []
+    for feature in ANALYSIS_FEATURES:
+        row: dict[str, Any] = {"feature": feature}
+        row["all"] = _mutual_information(frame[feature], frame[TARGET])
+        for mode in modes:
+            selected = frame[frame["mode"].astype(str).eq(mode)]
+            row[mode] = _mutual_information(selected[feature], selected[TARGET])
+        rows.append(row)
+    return pd.DataFrame(rows, columns=columns)
+
+
+def lcp_distribution_by_mode(
+    frame: pd.DataFrame, bins: int = 10
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    lcp = pd.to_numeric(frame[TARGET], errors="coerce").dropna().to_numpy(
+        dtype=float
+    )
+    modes = sorted(frame["mode"].dropna().astype(str).unique())
+    if len(lcp) == 0:
+        return pd.DataFrame(), pd.DataFrame()
+
+    if np.ptp(lcp) == 0:
+        edges = np.linspace(lcp[0] - 0.5, lcp[0] + 0.5, bins + 1)
+    else:
+        edges = np.linspace(float(lcp.min()), float(lcp.max()), bins + 1)
+    centers = (edges[:-1] + edges[1:]) / 2
+    histogram: dict[str, Any] = {"LCP (мс)": centers}
+    entropy_rows = []
+
+    for mode in modes:
+        values = pd.to_numeric(
+            frame.loc[frame["mode"].astype(str).eq(mode), TARGET],
+            errors="coerce",
+        ).dropna().to_numpy(dtype=float)
+        counts, _ = np.histogram(values, bins=edges)
+        probabilities = counts[counts > 0] / counts.sum() if counts.sum() else []
+        entropy = (
+            max(0.0, float(-(probabilities * np.log2(probabilities)).sum()))
+            if len(probabilities)
+            else float("nan")
+        )
+        histogram[mode] = counts / len(values) if len(values) else counts
+        entropy_rows.append({
+            "mode": mode,
+            "measurements": len(values),
+            "medianLcpMs": float(np.median(values)) if len(values) else float("nan"),
+            "stdLcpMs": float(np.std(values)) if len(values) else float("nan"),
+            "entropyBits": entropy,
+        })
+
+    return pd.DataFrame(histogram), pd.DataFrame(entropy_rows)
 
 
 def _make_pipeline(model_name: str) -> Pipeline:

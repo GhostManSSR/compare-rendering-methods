@@ -11,6 +11,17 @@ const allFrameworks = ['react', 'vue', 'angular']
 const allModes = ['csr', 'ssr', 'ssg']
 const allNetworkProfiles = Object.keys(networkProfiles)
 const allWorkloads = Object.keys(workloadProfiles)
+const resourceTypes = {
+    Script: 'scriptRequestCount',
+    Stylesheet: 'stylesheetRequestCount',
+    Image: 'imageRequestCount',
+    Font: 'fontRequestCount',
+    Document: 'documentRequestCount',
+    XHR: 'xhrRequestCount',
+    Fetch: 'fetchRequestCount',
+    Media: 'mediaRequestCount',
+    Other: 'otherRequestCount',
+}
 
 const frameworks = (
     process.env.BENCHMARK_FRAMEWORKS?.split(',') ?? allFrameworks
@@ -43,6 +54,19 @@ const resumeReports = process.env.BENCHMARK_RESUME === 'true'
 
 if (!Number.isInteger(runs) || runs < 1 || runs > 100) {
     throw new Error('BENCHMARK_RUNS must be an integer from 1 to 100')
+}
+
+function countResourceType(records, resourceType) {
+    if (resourceType === 'Other') {
+        return records.filter(
+            (record) => !Object.hasOwn(resourceTypes, record.resourceType)
+                || record.resourceType === 'Other'
+        ).length
+    }
+
+    return records.filter(
+        (record) => record.resourceType === resourceType
+    ).length
 }
 
 if (
@@ -248,6 +272,11 @@ function createSample(
             (request) => request.resourceType === 'Script'
         ),
 
+        cssTransferBytes: sumTransfer(
+            requests,
+            (request) => request.resourceType === 'Stylesheet'
+        ),
+
         imageTransferBytes: sumTransfer(
             requests,
             (request) => request.resourceType === 'Image'
@@ -256,6 +285,13 @@ function createSample(
         htmlTransferBytes: sumTransfer(
             requests,
             (request) => request.resourceType === 'Document'
+        ),
+
+        ...Object.fromEntries(
+            Object.entries(resourceTypes).map(([resourceType, field]) => [
+                field,
+                countResourceType(requests, resourceType),
+            ])
         ),
 
         apiRequestCount: api.apiRequestCount,
@@ -477,6 +513,7 @@ for (const framework of frameworks) {
                         fcpMs: sample.fcpMs,
                         tbtMs: sample.tbtMs,
                         jsTransferBytes: sample.jsTransferBytes,
+                        cssTransferBytes: sample.cssTransferBytes,
                         imageTransferBytes: sample.imageTransferBytes,
                         domNodes: sample.domNodes,
                     })
@@ -544,8 +581,48 @@ const summary = frameworks.flatMap((framework) =>
                         group.map((sample) => sample.requestCount)
                     ),
 
+                    scriptRequestsMedian: median(
+                        group.map((sample) => sample.scriptRequestCount)
+                    ),
+
+                    stylesheetRequestsMedian: median(
+                        group.map((sample) => sample.stylesheetRequestCount)
+                    ),
+
+                    imageRequestsMedian: median(
+                        group.map((sample) => sample.imageRequestCount)
+                    ),
+
+                    fontRequestsMedian: median(
+                        group.map((sample) => sample.fontRequestCount)
+                    ),
+
+                    documentRequestsMedian: median(
+                        group.map((sample) => sample.documentRequestCount)
+                    ),
+
+                    xhrRequestsMedian: median(
+                        group.map((sample) => sample.xhrRequestCount)
+                    ),
+
+                    fetchRequestsMedian: median(
+                        group.map((sample) => sample.fetchRequestCount)
+                    ),
+
+                    mediaRequestsMedian: median(
+                        group.map((sample) => sample.mediaRequestCount)
+                    ),
+
+                    otherRequestsMedian: median(
+                        group.map((sample) => sample.otherRequestCount)
+                    ),
+
                     jsTransferMedianBytes: median(
                         group.map((sample) => sample.jsTransferBytes)
+                    ),
+
+                    cssTransferMedianBytes: median(
+                        group.map((sample) => sample.cssTransferBytes)
                     ),
 
                     imageTransferMedianBytes: median(
@@ -576,7 +653,6 @@ const summary = frameworks.flatMap((framework) =>
                     syntheticDomNodes: group[0]?.syntheticDomNodes ?? null,
                     extraDomCards: group[0]?.extraDomCards ?? null,
                     imageWidth: group[0]?.imageWidth ?? null,
-                    imageWidth: group[0]?.imageWidth ?? null,
                     lcpElement: mostCommonLcpElement,
                 }
             })
@@ -597,7 +673,17 @@ const columns = [
     'fcpMedianMs',
     'tbtMedianMs',
     'requestsMedian',
+    'scriptRequestsMedian',
+    'stylesheetRequestsMedian',
+    'imageRequestsMedian',
+    'fontRequestsMedian',
+    'documentRequestsMedian',
+    'xhrRequestsMedian',
+    'fetchRequestsMedian',
+    'mediaRequestsMedian',
+    'otherRequestsMedian',
     'jsTransferMedianBytes',
+    'cssTransferMedianBytes',
     'imageTransferMedianBytes',
     'htmlTransferMedianBytes',
     'domNodesMedian',
@@ -608,7 +694,6 @@ const columns = [
     'syntheticImagesTotalBytes',
     'syntheticDomNodes',
     'extraDomCards',
-    'imageWidth',
     'imageWidth',
     'apiRequestCountMedian',
     'apiLatencyMedianMs',

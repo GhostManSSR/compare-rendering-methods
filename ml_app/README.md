@@ -2,7 +2,9 @@
 
 Приложение загружает JSON-выборки Lighthouse, обучает Linear Regression,
 Random Forest и Gradient Boosting, сравнивает фактический и прогнозируемый LCP
-по MAE, RMSE и R² и позволяет интерактивно прогнозировать LCP.
+по MAE, RMSE и R², оценивает взаимную информацию технических признаков с LCP,
+сравнивает распределения и энтропию LCP между режимами рендеринга и позволяет
+интерактивно прогнозировать LCP.
 
 ## Запуск в WSL
 
@@ -38,6 +40,11 @@ out-of-fold прогноз для каждого измерения, поэто�
 характеристик ограничены неотрицательными значениями, а отрицательный вывод
 модели ограничивается нулём, поскольку отрицательный LCP физически невозможен.
 
+В разделе анализа доступны тепловая карта взаимной информации признаков с LCP,
+ранжирование признаков и сравнение гистограмм/энтропии LCP по режимам. Энтропия
+считается по общим интервалам гистограммы и описывает наблюдаемую выборку, но не
+доказывает причинность. Нормализованные измерения можно скачать в CSV или JSON.
+
 ## Установка и тесты в WSL
 
 Из корня репозитория:
@@ -67,6 +74,10 @@ Python-приложения или Makefile.
 предпочтительные признаки: `framework`, `mode`, `networkProfile`, `workload`,
 `networkRttMs`, `networkThroughputKbps`, `syntheticJsBytes`,
 `syntheticImageCount`, `syntheticImageBytes`, `syntheticDomNodes`,
-`jsTransferBytes`, `imageTransferBytes`, `domNodes`, `ttfbMs`, `fcpMs` и `tbtMs`.
+`jsTransferBytes`, `cssTransferBytes`, `imageTransferBytes`, `domNodes`,
+`requestCount`, а также `scriptRequestCount`, `stylesheetRequestCount`,
+`imageRequestCount`, `fontRequestCount`, `documentRequestCount`,
+`xhrRequestCount`, `fetchRequestCount`, `mediaRequestCount` и
+`otherRequestCount`; также поддерживаются `ttfbMs`, `fcpMs` и `tbtMs`.
 Поддерживаются и исходные Lighthouse JSON-отчёты; метаданные профиля в них
 берутся из URL отчёта, а недостающие поля обрабатываются импьютером модели.

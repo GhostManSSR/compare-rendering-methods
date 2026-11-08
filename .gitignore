@@ -2,7 +2,9 @@
 **/dist/
 **/.angular/
 **/*.tsbuildinfo
-artifacts/
+artifacts/lighthouse/angular*
+artifacts/lighthouse/react*
+artifacts/lighthouse/vue*
 .venv/
 **/.venv/
 __pycache__/

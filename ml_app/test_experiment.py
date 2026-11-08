@@ -16,6 +16,8 @@ from experiment import (
     default_samples_path,
     default_summary_path,
     load_json_files,
+    lcp_distribution_by_mode,
+    mutual_information_by_mode,
     predict_lcp,
     records_from_json,
 )
@@ -47,6 +49,8 @@ class ExperimentDataTests(unittest.TestCase):
         self.assertEqual(skipped, 1)
         self.assertEqual(frame.iloc[0]["networkProfile"], "legacy")
         self.assertEqual(frame.iloc[0]["lcpMs"], 1250)
+        mi = mutual_information_by_mode(frame)
+        self.assertTrue(mi["all"].isna().all())
 
     def test_lighthouse_report_is_extracted(self):
         report = {
@@ -60,7 +64,11 @@ class ExperimentDataTests(unittest.TestCase):
                     "details": {
                         "items": [
                             {"resourceType": "Script", "transferSize": 1000},
+                            {"resourceType": "Stylesheet", "transferSize": 300},
                             {"resourceType": "Image", "transferSize": 2000},
+                            {"resourceType": "Font", "transferSize": 120},
+                            {"resourceType": "XHR", "transferSize": 80},
+                            {"resourceType": "TextTrack", "transferSize": 40},
                         ]
                     }
                 },
@@ -72,10 +80,57 @@ class ExperimentDataTests(unittest.TestCase):
         self.assertEqual(sample["networkProfile"], "slow-3g")
         self.assertEqual(sample["workload"], "heavy")
         self.assertEqual(sample["jsTransferBytes"], 1000)
+        self.assertEqual(sample["cssTransferBytes"], 300)
         self.assertEqual(sample["imageTransferBytes"], 2000)
+        self.assertEqual(sample["requestCount"], 6)
+        self.assertEqual(sample["stylesheetRequestCount"], 1)
+        self.assertEqual(sample["fontRequestCount"], 1)
+        self.assertEqual(sample["xhrRequestCount"], 1)
+        self.assertEqual(sample["otherRequestCount"], 1)
         self.assertEqual(sample["networkRttMs"], 150)
         self.assertEqual(sample["syntheticJsBytes"], 96000)
         self.assertEqual(sample["syntheticDomNodes"], 205)
+
+    def test_analysis_reports_mutual_information_and_lcp_entropy_by_mode(self):
+        rows = []
+        for mode, base_lcp in (("csr", 1400), ("ssr", 1000), ("ssg", 800)):
+            for run in range(8):
+                js_bytes = run * 1000
+                rows.append({
+                    "framework": "react",
+                    "mode": mode,
+                    "networkProfile": "fast-4g",
+                    "workload": "light",
+                    "lcpMs": base_lcp + js_bytes,
+                    "jsTransferBytes": js_bytes,
+                    "cssTransferBytes": run * 100,
+                    "domNodes": 100 + run,
+                    "requestCount": 5 + run,
+                    "scriptRequestCount": run,
+                    "stylesheetRequestCount": 1,
+                    "imageRequestCount": 2,
+                    "fontRequestCount": 1,
+                    "documentRequestCount": 1,
+                    "xhrRequestCount": 0,
+                    "fetchRequestCount": 0,
+                    "mediaRequestCount": 0,
+                    "otherRequestCount": 0,
+                })
+
+        frame, _ = load_json_files(
+            [("samples.json", json.dumps(rows).encode())]
+        )
+        mutual_information = mutual_information_by_mode(frame)
+        histogram, entropy = lcp_distribution_by_mode(frame)
+
+        js_row = mutual_information.set_index("feature").loc["jsTransferBytes"]
+        self.assertGreater(js_row["all"], 0)
+        self.assertEqual(set(mutual_information.columns), {"feature", "all", "csr", "ssr", "ssg"})
+        self.assertEqual(set(entropy["mode"]), {"csr", "ssr", "ssg"})
+        self.assertTrue(
+            (histogram[["csr", "ssr", "ssg"]].sum().round(8) == 1).all()
+        )
+        self.assertTrue((entropy["entropyBits"] >= 0).all())
 
     def test_models_train_and_evaluate_by_configuration_group(self):
         network_profiles = os.environ.get(

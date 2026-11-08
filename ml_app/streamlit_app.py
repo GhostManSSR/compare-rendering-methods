@@ -1,3 +1,4 @@
+from html import escape
 import sys
 from pathlib import Path
 
@@ -16,7 +17,9 @@ from experiment import (  # noqa: E402
     default_summary_path,
     default_numeric_values,
     evaluate_models,
+    lcp_distribution_by_mode,
     load_json_files,
+    mutual_information_by_mode,
     predict_lcp,
 )
 
@@ -70,9 +73,19 @@ FEATURE_LABELS = {
     "syntheticDomNodes": "Дополнительные DOM-узлы",
     "domNodes": "Размер DOM по Lighthouse (узлы)",
     "jsTransferBytes": "Переданный JavaScript (байт)",
+    "cssTransferBytes": "Переданный CSS (байт)",
     "imageTransferBytes": "Переданные изображения (байт)",
     "htmlTransferBytes": "Переданный HTML (байт)",
     "requestCount": "Количество сетевых запросов",
+    "scriptRequestCount": "Запросы JavaScript",
+    "stylesheetRequestCount": "Запросы CSS",
+    "imageRequestCount": "Запросы изображений",
+    "fontRequestCount": "Запросы шрифтов",
+    "documentRequestCount": "Запросы документов",
+    "xhrRequestCount": "XHR-запросы",
+    "fetchRequestCount": "Fetch-запросы",
+    "mediaRequestCount": "Запросы медиа",
+    "otherRequestCount": "Прочие запросы",
     "ttfbMs": "TTFB (мс)",
     "fcpMs": "FCP (мс)",
     "tbtMs": "TBT (мс)",
@@ -131,6 +144,184 @@ if legacy_data:
         "В наборе есть старые измерения без сетевого профиля и нагрузки (legacy). "
         "Чтобы получить прогнозы для fast-4g/regular-4g/slow-3g и light/medium/heavy, "
         "загрузите новый samples.json после полного запуска Lighthouse."
+    )
+
+st.subheader("Выгрузка измерений")
+st.caption(
+    "Данные включают LCP, размеры JS/CSS, DOM и число запросов с разбивкой по типам."
+)
+export_columns = st.columns(2)
+export_columns[0].download_button(
+    "Скачать выборку CSV",
+    data=data.to_csv(index=False).encode("utf-8"),
+    file_name="lighthouse-samples.csv",
+    mime="text/csv",
+    width="stretch",
+)
+export_columns[1].download_button(
+    "Скачать выборку JSON",
+    data=data.to_json(orient="records", force_ascii=False, indent=2),
+    file_name="lighthouse-samples.json",
+    mime="application/json",
+    width="stretch",
+)
+
+st.subheader("Результаты анализа")
+st.write(
+    "Взаимная информация оценивает статистическую зависимость признака от LCP "
+    "(больше значение — сильнее наблюдаемая зависимость; это не доказывает причинность)."
+)
+
+mutual_information = mutual_information_by_mode(data)
+mode_columns = [
+    column for column in mutual_information.columns if column not in {"feature", "all"}
+]
+display_mi = mutual_information.rename(
+    columns={
+        "feature": "Технический признак",
+        "all": "Все измерения",
+        **{mode: mode.upper() for mode in mode_columns},
+    }
+).set_index("Технический признак")
+display_mi.index = [
+    FEATURE_LABELS.get(feature, feature) for feature in display_mi.index
+]
+mi_value_columns = list(display_mi.columns)
+st.markdown("**Матрица взаимной информации с LCP**")
+mi_values = display_mi[mi_value_columns].to_numpy(dtype=float)
+finite_mi = mi_values[pd.notna(mi_values)]
+minimum_mi = float(finite_mi.min()) if finite_mi.size else 0.0
+maximum_mi = float(finite_mi.max()) if finite_mi.size else 0.0
+heatmap_headers = "".join(
+    f"<th>{escape(str(column))}</th>" for column in mi_value_columns
+)
+heatmap_rows = []
+for feature, row in display_mi.iterrows():
+    cells = []
+    for column in mi_value_columns:
+        value = row[column]
+        if pd.isna(value):
+            cells.append("<td class=\"missing\">н/д</td>")
+            continue
+        ratio = (
+            (float(value) - minimum_mi) / (maximum_mi - minimum_mi)
+            if maximum_mi > minimum_mi
+            else 0.0
+        )
+        red = round(255 - 40 * ratio)
+        green = round(247 - 199 * ratio)
+        blue = round(188 - 149 * ratio)
+        cells.append(
+            f'<td style="background-color:rgb({red},{green},{blue})">'
+            f"{float(value):.3f}</td>"
+        )
+    heatmap_rows.append(
+        f"<tr><th>{escape(str(feature))}</th>{''.join(cells)}</tr>"
+    )
+st.markdown(
+    "<div style=\"overflow-x:auto\"><table style=\"border-collapse:collapse;"
+    "width:100%;font-size:0.9rem\"><thead><tr><th>Технический признак</th>"
+    f"{heatmap_headers}</tr></thead><tbody>{''.join(heatmap_rows)}"
+    "</tbody></table></div>",
+    unsafe_allow_html=True,
+)
+st.caption(
+    "Оценка в режиме отображается при наличии не менее четырёх измерений; "
+    "«н/д» означает, что данных недостаточно."
+)
+
+ranking = (
+    mutual_information[["feature", "all"]]
+    .dropna(subset=["all"])
+    .sort_values("all", ascending=False)
+    .rename(columns={"feature": "Признак", "all": "MI с LCP"})
+)
+ranking["Признак"] = ranking["Признак"].map(
+    lambda feature: FEATURE_LABELS.get(feature, feature)
+)
+ranking.insert(0, "Ранг", range(1, len(ranking) + 1))
+st.markdown("**Ранжирование признаков по взаимной информации**")
+st.dataframe(
+    ranking.style.format({"MI с LCP": "{:.3f}"}),
+    width="stretch",
+    hide_index=True,
+)
+
+mode_insights = []
+for mode in mode_columns:
+    mode_ranking = (
+        mutual_information[["feature", mode]]
+        .dropna(subset=[mode])
+        .sort_values(mode, ascending=False)
+    )
+    if not mode_ranking.empty:
+        feature = mode_ranking.iloc[0]["feature"]
+        mode_insights.append(
+            f"{mode.upper()}: наиболее связанный с LCP признак — "
+            f"{FEATURE_LABELS.get(feature, feature)} "
+            f"(MI {mode_ranking.iloc[0][mode]:.3f})"
+        )
+if mode_insights:
+    st.caption(" · ".join(mode_insights))
+
+histogram, entropy = lcp_distribution_by_mode(data)
+if not entropy.empty:
+    st.markdown("**Распределение и энтропия LCP по режимам**")
+    st.line_chart(
+        histogram.set_index("LCP (мс)"),
+        x_label="LCP (мс)",
+        y_label="Доля измерений",
+    )
+    entropy_view = entropy.rename(
+        columns={
+            "mode": "Рендеринг",
+            "measurements": "Измерений",
+            "medianLcpMs": "Медиана LCP (мс)",
+            "stdLcpMs": "Станд. отклонение LCP (мс)",
+            "entropyBits": "Энтропия (бит)",
+        }
+    )
+    entropy_view["Рендеринг"] = entropy_view["Рендеринг"].str.upper()
+    st.dataframe(
+        entropy_view.style.format(
+            {
+                "Медиана LCP (мс)": "{:.1f}",
+                "Станд. отклонение LCP (мс)": "{:.1f}",
+                "Энтропия (бит)": "{:.3f}",
+            }
+        ),
+        width="stretch",
+        hide_index=True,
+    )
+    if len(entropy_view) > 1:
+        lowest_entropy = entropy_view.loc[entropy_view["Энтропия (бит)"].idxmin()]
+        highest_entropy = entropy_view.loc[entropy_view["Энтропия (бит)"].idxmax()]
+        st.info(
+            f"В этой выборке распределение LCP наименее разнообразно для "
+            f"{lowest_entropy['Рендеринг']} ({lowest_entropy['Энтропия (бит)']:.3f} бит), "
+            f"наиболее — для {highest_entropy['Рендеринг']} "
+            f"({highest_entropy['Энтропия (бит)']:.3f} бит). "
+            "Энтропия оценена по общим интервалам гистограммы и сама по себе "
+            "не объясняет причину различий."
+        )
+        entropy_by_mode = entropy_view.set_index("Рендеринг")["Энтропия (бит)"]
+        if {"CSR", "SSR"} <= set(entropy_by_mode.index):
+            difference = entropy_by_mode["CSR"] - entropy_by_mode["SSR"]
+            if difference > 0:
+                st.success(
+                    f"В измерениях SSR энтропия LCP ниже CSR на "
+                    f"{difference:.3f} бит; это сравнение распределений, "
+                    "а не доказательство влияния режима или отдельного признака."
+                )
+            elif difference < 0:
+                st.success(
+                    f"В измерениях SSR энтропия LCP выше CSR на "
+                    f"{abs(difference):.3f} бит; это сравнение распределений, "
+                    "а не доказательство влияния режима или отдельного признака."
+                )
+    st.caption(
+        "Для сопоставимости режимов используются общие интервалы LCP; "
+        "энтропия — эмпирическая оценка распределения в битах."
     )
 
 if default_summary.is_file():
@@ -257,9 +448,19 @@ with st.form("prediction-form"):
             "syntheticDomNodes",
             "domNodes",
             "jsTransferBytes",
+            "cssTransferBytes",
             "imageTransferBytes",
             "htmlTransferBytes",
             "requestCount",
+            "scriptRequestCount",
+            "stylesheetRequestCount",
+            "imageRequestCount",
+            "fontRequestCount",
+            "documentRequestCount",
+            "xhrRequestCount",
+            "fetchRequestCount",
+            "mediaRequestCount",
+            "otherRequestCount",
         } else 10.0
         prediction[column] = numeric_columns[index % 3].number_input(
             FEATURE_LABELS[column],
