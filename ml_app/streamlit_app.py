@@ -265,63 +265,94 @@ if mode_insights:
     st.caption(" · ".join(mode_insights))
 
 histogram, entropy = lcp_distribution_by_mode(data)
+
 if not entropy.empty:
-    st.markdown("**Распределение и энтропия LCP по режимам**")
+    st.subheader("Распределение и энтропия LCP по режимам")
+
+    # 1. График распределения LCP — сохраняем
+    st.markdown("**Распределение LCP**")
+
     st.line_chart(
         histogram.set_index("LCP (мс)"),
         x_label="LCP (мс)",
         y_label="Доля измерений",
     )
-    entropy_view = entropy.rename(
+
+    # 2. Таблица энтропии
+    st.markdown("**Сравнительная таблица энтропии LCP**")
+
+    entropy_table = entropy.rename(
         columns={
-            "mode": "Рендеринг",
-            "measurements": "Измерений",
+            "mode": "Режим рендеринга",
+            "measurements": "Количество измерений",
             "medianLcpMs": "Медиана LCP (мс)",
-            "stdLcpMs": "Станд. отклонение LCP (мс)",
-            "entropyBits": "Энтропия (бит)",
+            "stdLcpMs": "Стандартное отклонение (мс)",
+            "entropyBits": "Энтропия Шеннона (бит)",
         }
+    ).copy()
+
+    entropy_table["Режим рендеринга"] = (
+        entropy_table["Режим рендеринга"].str.upper()
     )
-    entropy_view["Рендеринг"] = entropy_view["Рендеринг"].str.upper()
+
+    entropy_table = entropy_table[
+        [
+            "Режим рендеринга",
+            "Количество измерений",
+            "Медиана LCP (мс)",
+            "Стандартное отклонение (мс)",
+            "Энтропия Шеннона (бит)",
+        ]
+    ]
+
     st.dataframe(
-        entropy_view.style.format(
-            {
-                "Медиана LCP (мс)": "{:.1f}",
-                "Станд. отклонение LCP (мс)": "{:.1f}",
-                "Энтропия (бит)": "{:.3f}",
-            }
-        ),
+        entropy_table.style.format({
+            "Медиана LCP (мс)": "{:.2f}",
+            "Стандартное отклонение (мс)": "{:.2f}",
+            "Энтропия Шеннона (бит)": "{:.4f}",
+        }),
         width="stretch",
         hide_index=True,
     )
-    if len(entropy_view) > 1:
-        lowest_entropy = entropy_view.loc[entropy_view["Энтропия (бит)"].idxmin()]
-        highest_entropy = entropy_view.loc[entropy_view["Энтропия (бит)"].idxmax()]
-        st.info(
-            f"В этой выборке распределение LCP наименее разнообразно для "
-            f"{lowest_entropy['Рендеринг']} ({lowest_entropy['Энтропия (бит)']:.3f} бит), "
-            f"наиболее — для {highest_entropy['Рендеринг']} "
-            f"({highest_entropy['Энтропия (бит)']:.3f} бит). "
-            "Энтропия оценена по общим интервалам гистограммы и сама по себе "
-            "не объясняет причину различий."
+
+    # 3. Интерпретация результатов
+    if len(entropy_table) > 1:
+        lowest_entropy = entropy_table.loc[
+            entropy_table["Энтропия Шеннона (бит)"].idxmin()
+        ]
+
+        highest_entropy = entropy_table.loc[
+            entropy_table["Энтропия Шеннона (бит)"].idxmax()
+        ]
+
+        col1, col2 = st.columns(2)
+
+        col1.metric(
+            "Минимальная энтропия",
+            f"{lowest_entropy['Энтропия Шеннона (бит)']:.4f} бит",
+            lowest_entropy["Режим рендеринга"],
         )
-        entropy_by_mode = entropy_view.set_index("Рендеринг")["Энтропия (бит)"]
-        if {"CSR", "SSR"} <= set(entropy_by_mode.index):
-            difference = entropy_by_mode["CSR"] - entropy_by_mode["SSR"]
-            if difference > 0:
-                st.success(
-                    f"В измерениях SSR энтропия LCP ниже CSR на "
-                    f"{difference:.3f} бит; это сравнение распределений, "
-                    "а не доказательство влияния режима или отдельного признака."
-                )
-            elif difference < 0:
-                st.success(
-                    f"В измерениях SSR энтропия LCP выше CSR на "
-                    f"{abs(difference):.3f} бит; это сравнение распределений, "
-                    "а не доказательство влияния режима или отдельного признака."
-                )
+
+        col2.metric(
+            "Максимальная энтропия",
+            f"{highest_entropy['Энтропия Шеннона (бит)']:.4f} бит",
+            highest_entropy["Режим рендеринга"],
+        )
+
+        st.info(
+            f"Минимальная энтропия наблюдается для "
+            f"{lowest_entropy['Режим рендеринга']} "
+            f"({lowest_entropy['Энтропия Шеннона (бит)']:.4f} бит). "
+            f"Максимальная энтропия наблюдается для "
+            f"{highest_entropy['Режим рендеринга']} "
+            f"({highest_entropy['Энтропия Шеннона (бит)']:.4f} бит)."
+        )
+
     st.caption(
-        "Для сопоставимости режимов используются общие интервалы LCP; "
-        "энтропия — эмпирическая оценка распределения в битах."
+        "Энтропия Шеннона характеризует разнообразие распределения LCP. "
+        "Меньшая энтропия означает более концентрированное распределение, "
+        "большая — более разнообразное. Энтропия не является прямой "
+        "оценкой скорости загрузки страницы."
     )
 
 if default_summary.is_file():
