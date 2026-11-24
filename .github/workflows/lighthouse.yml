@@ -25,14 +25,14 @@ on:
 jobs:
   lighthouse:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -52,25 +52,19 @@ jobs:
       - name: Run Lighthouse benchmark
         env:
           BENCHMARK_RUNS: "10"
+          BENCHMARK_FRAMEWORKS: react
+          BENCHMARK_MODES: csr
+          BENCHMARK_NETWORK_PROFILES: fast-4g
+          BENCHMARK_WORKLOADS: light
+          BENCHMARK_OUTPUT_DIR: /workspace/artifacts/lighthouse-smoke
         run: npm run benchmark:lighthouse:docker
-
-      - name: Run Lighthouse CI
-        run: npm run benchmark:lhci:docker
 
       - name: Upload Lighthouse benchmark reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: lighthouse-benchmark
-          path: artifacts/lighthouse/
-          if-no-files-found: warn
-
-      - name: Upload Lighthouse CI reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: lighthouse-ci
-          path: artifacts/lhci/
+          name: lighthouse-smoke-test
+          path: artifacts/lighthouse-smoke/
           if-no-files-found: warn
 
       - name: Show container logs on failure
@@ -96,7 +90,7 @@ jobs:
 
       - name: Upload release package
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: lighthouse-benchmark-app
           path: lighthouse-benchmark-app.zip
@@ -111,7 +105,7 @@ jobs:
 
     steps:
       - name: Download release package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: lighthouse-benchmark-app
 

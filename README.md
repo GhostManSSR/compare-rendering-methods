@@ -31,7 +31,7 @@ docker compose down
 
 Рекомендуемый способ — Chromium внутри Docker. Он не зависит от локальной установки Chrome и проверяет все сочетания фреймворка, режима рендеринга, сетевого профиля и нагрузки: **9 × 3 × 3 конфигурации с 20 повторами = 1 620 запусков Lighthouse**. Полный эксперимент может выполняться долго.
 
-В Lighthouse workflow GitHub Actions выполняется по 10 повторов каждой конфигурации (810 запусков) для сокращения времени CI; полный локальный эксперимент по-прежнему запускается с 20 повторами.
+В Lighthouse workflow GitHub Actions выполняется 10 повторов одной конфигурации (`react/csr/fast-4g/light`) для smoke-проверки. Эти результаты загружаются отдельно в `lighthouse-smoke-test`; сохранённый полный набор в `artifacts/lighthouse/` не перезаписывается.
 
 ```powershell
 docker compose --profile tools build lighthouse-runner

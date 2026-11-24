@@ -5,6 +5,7 @@
 artifacts/lighthouse/angular*
 artifacts/lighthouse/react*
 artifacts/lighthouse/vue*
+artifacts/lighthouse-smoke/
 .venv/
 **/.venv/
 __pycache__/
