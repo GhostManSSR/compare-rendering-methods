@@ -27,6 +27,26 @@ LIGHTHOUSE_ARTIFACTS_DIR=/mnt/c/Users/Arti/lcp-benchmark-artifacts/lighthouse ma
 
 Этот путь можно заменить на каталог с вашими `samples.json` и `summary.json`.
 
+## Запуск приложения через Docker Compose
+
+Из корня репозитория запустите:
+
+```powershell
+docker compose --profile ml-app up --build -d ml-app
+```
+
+Откройте [http://localhost:8501](http://localhost:8501). Контейнер включает
+текущие `samples.json` и `summary.json` из `artifacts/lighthouse/`; порт можно
+переопределить переменной `ML_APP_PORT`. Остановить приложение:
+
+```powershell
+docker compose --profile ml-app down
+```
+
+В GitHub Release, созданном по тегу `v*`, доступен архив
+`lighthouse-benchmark-app.zip` с исходным кодом, Docker Compose-конфигурацией и
+результатами бенчмарка. После распаковки архива выполните команду запуска выше.
+
 Оценка выполняется на группах экспериментальных конфигураций
 (фреймворк, режим рендеринга, сеть, нагрузка), а не на случайно перемешанных
 повторах одной конфигурации. Пятиблочная GroupKFold cross-validation формирует

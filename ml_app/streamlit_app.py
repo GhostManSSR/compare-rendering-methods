@@ -1,6 +1,8 @@
 from html import escape
 import sys
 from pathlib import Path
+import numpy as np
+import altair as alt
 
 import pandas as pd
 import streamlit as st
@@ -90,6 +92,97 @@ FEATURE_LABELS = {
     "fcpMs": "FCP (мс)",
     "tbtMs": "TBT (мс)",
 }
+
+def build_lcp_distribution(data, bins=40):
+    """
+    Строит сопоставимые распределения LCP
+    с общей логарифмической сеткой интервалов.
+
+    Энтропия рассчитывается по вероятностям
+    попадания измерений в одинаковые интервалы.
+    """
+
+    frame = data.copy()
+    frame["_lcp"] = pd.to_numeric(
+        frame[TARGET], errors="coerce"
+    )
+
+    frame = frame[
+        frame["_lcp"].notna() & (frame["_lcp"] > 0)
+    ]
+
+    if frame.empty:
+        raise ValueError("Нет положительных значений LCP.")
+
+    min_lcp = float(frame["_lcp"].min())
+    max_lcp = float(frame["_lcp"].max())
+
+    # Общие логарифмические границы для всех режимов
+    if np.isclose(min_lcp, max_lcp):
+        edges = np.geomspace(
+            min_lcp * 0.95,
+            max_lcp * 1.05,
+            bins + 1
+        )
+    else:
+        edges = np.geomspace(
+            min_lcp,
+            max_lcp * (1 + 1e-10),
+            bins + 1
+        )
+
+    # Геометрические центры интервалов
+    centers = np.sqrt(edges[:-1] * edges[1:])
+
+    histogram = pd.DataFrame({
+        "LCP (мс)": centers
+    })
+
+    entropy_rows = []
+
+    for mode in RENDERING_MODES:
+        values = frame.loc[
+            frame["mode"] == mode, "_lcp"
+        ].to_numpy(dtype=float)
+
+        if len(values) == 0:
+            continue
+
+        counts, _ = np.histogram(values, bins=edges)
+
+        probabilities = counts / len(values)
+
+        histogram[mode] = probabilities
+
+        # Энтропия Шеннона в битах
+        nonzero = probabilities[probabilities > 0]
+
+        entropy_bits = float(
+            -np.sum(nonzero * np.log2(nonzero))
+        )
+
+        entropy_rows.append({
+            "mode": mode,
+            "measurements": len(values),
+            "medianLcpMs": float(np.median(values)),
+            "stdLcpMs": float(
+                np.std(values, ddof=1)
+                if len(values) > 1 else 0
+            ),
+            "iqrLcpMs": float(
+                np.percentile(values, 75)
+                - np.percentile(values, 25)
+            ),
+            "cvLcp": float(
+                np.std(values, ddof=1)
+                / np.mean(values)
+                if len(values) > 1
+                and np.mean(values) != 0 else 0
+            ),
+            "entropyBits": entropy_bits,
+        })
+
+    return histogram, pd.DataFrame(entropy_rows)
 
 st.set_page_config(page_title="LCP ML Experiment", page_icon="📊", layout="wide")
 st.title("Прогнозирование LCP методами машинного обучения")
@@ -264,18 +357,59 @@ for mode in mode_columns:
 if mode_insights:
     st.caption(" · ".join(mode_insights))
 
-histogram, entropy = lcp_distribution_by_mode(data)
+histogram, entropy = build_lcp_distribution(
+    data,
+    bins=40
+)
 
 if not entropy.empty:
     st.subheader("Распределение и энтропия LCP по режимам")
 
     # 1. График распределения LCP — сохраняем
-    st.markdown("**Распределение LCP**")
+    st.markdown("**Распределение LCP по архитектурам**")
 
-    st.line_chart(
-        histogram.set_index("LCP (мс)"),
-        x_label="LCP (мс)",
-        y_label="Доля измерений",
+    chart_data = histogram.melt(
+        id_vars=["LCP (мс)"],
+        var_name="Режим рендеринга",
+        value_name="Доля измерений"
+    )
+
+    chart = (
+        alt.Chart(chart_data)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X(
+                "LCP (мс):Q",
+                scale=alt.Scale(type="log"),
+                axis=alt.Axis(
+                    title="LCP (мс), логарифмическая шкала"
+                )
+            ),
+            y=alt.Y(
+                "Доля измерений:Q",
+                title="Доля измерений",
+                scale=alt.Scale(zero=True)
+            ),
+            color=alt.Color(
+                "Режим рендеринга:N",
+                scale=alt.Scale(
+                    domain=["ssg", "ssr", "csr"],
+                    range=["#16A34A", "#E69B24", "#DC4444"]
+                ),
+                legend=alt.Legend(title="Архитектура")
+            ),
+            tooltip=[
+                alt.Tooltip("LCP (мс):Q", format=".2f"),
+                alt.Tooltip("Режим рендеринга:N"),
+                alt.Tooltip("Доля измерений:Q", format=".4f")
+            ]
+        )
+        .properties(height=430)
+    )
+
+    st.altair_chart(
+        chart,
+        use_container_width=True
     )
 
     # 2. Таблица энтропии
@@ -287,6 +421,8 @@ if not entropy.empty:
             "measurements": "Количество измерений",
             "medianLcpMs": "Медиана LCP (мс)",
             "stdLcpMs": "Стандартное отклонение (мс)",
+            "iqrLcpMs": "Межквартильный размах (мс)",
+            "cvLcp": "Коэффициент вариации",
             "entropyBits": "Энтропия Шеннона (бит)",
         }
     ).copy()
@@ -301,6 +437,8 @@ if not entropy.empty:
             "Количество измерений",
             "Медиана LCP (мс)",
             "Стандартное отклонение (мс)",
+            "Межквартильный размах (мс)",
+            "Коэффициент вариации",
             "Энтропия Шеннона (бит)",
         ]
     ]
@@ -309,6 +447,8 @@ if not entropy.empty:
         entropy_table.style.format({
             "Медиана LCP (мс)": "{:.2f}",
             "Стандартное отклонение (мс)": "{:.2f}",
+            "Межквартильный размах (мс)": "{:.2f}",
+            "Коэффициент вариации": "{:.4f}",
             "Энтропия Шеннона (бит)": "{:.4f}",
         }),
         width="stretch",
