@@ -3,6 +3,9 @@ name: Lighthouse benchmark
 
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - "v*"
   pull_request:
     paths:
       - "apps-angular/**"
@@ -47,6 +50,8 @@ jobs:
         run: docker compose --profile tools build lighthouse-runner
 
       - name: Run Lighthouse benchmark
+        env:
+          BENCHMARK_RUNS: "10"
         run: npm run benchmark:lighthouse:docker
 
       - name: Run Lighthouse CI
@@ -75,3 +80,43 @@ jobs:
       - name: Stop containers
         if: always()
         run: docker compose down
+
+      - name: Package Python app and benchmark results
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          mkdir -p release-package
+          git archive HEAD | tar -xf - -C release-package
+          mkdir -p release-package/artifacts/lighthouse
+          cp artifacts/lighthouse/samples.json artifacts/lighthouse/summary.json artifacts/lighthouse/summary.csv release-package/artifacts/lighthouse/
+          test -s release-package/artifacts/lighthouse/samples.json
+          test -s release-package/artifacts/lighthouse/summary.json
+          test -s release-package/artifacts/lighthouse/summary.csv
+          (cd release-package && zip -qr ../lighthouse-benchmark-app.zip .)
+
+      - name: Upload release package
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-benchmark-app
+          path: lighthouse-benchmark-app.zip
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: lighthouse
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download release package
+        uses: actions/download-artifact@v4
+        with:
+          name: lighthouse-benchmark-app
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release create "$GITHUB_REF_NAME" lighthouse-benchmark-app.zip --title "$GITHUB_REF_NAME" --generate-notes
