@@ -27,11 +27,73 @@ To stop the environment:
 docker compose down
 ```
 
+### Архитектура контейнеров
+
+Обычный `docker compose up --build -d` запускает каталог данных, три приложения и Nginx. Lighthouse runner и Streamlit-приложение запускаются отдельно через Compose profiles.
+
+```mermaid
+flowchart LR
+    browser["Браузер"]
+
+    subgraph compose["Docker Compose"]
+        nginx["benchmark<br/>Nginx :80"]
+        react["react :5173"]
+        vue["vue :5174"]
+        angular["angular :4000"]
+        api["catalog-api :3000"]
+        runner["lighthouse-runner<br/>profile: tools"]
+        ml["ml-app<br/>Streamlit :8501<br/>profile: ml-app"]
+
+        nginx -->|"/react/*"| react
+        nginx -->|"/vue/*"| vue
+        nginx -->|"/angular/*"| angular
+        nginx -->|"/api/*, /benchmark-assets/*"| api
+        runner -->|"HTTP: http://benchmark:80"| nginx
+    end
+
+    results["Host: artifacts/lighthouse/<br/>samples.json, summary.json, summary.csv"]
+    smoke["CI only: artifacts/lighthouse-smoke/"]
+
+    browser -->|"http://localhost:8080"| nginx
+    browser -->|"http://localhost:8501"| ml
+    runner -->|"bind mount: результаты запусков"| results
+    runner -.->|"в CI путь вывода переопределён"| smoke
+    results -->|"Dockerfile.ml-app копирует результаты при сборке"| ml
+```
+
+Для просмотра результатов запустите Streamlit-профиль командой `docker compose --profile ml-app up --build -d ml-app`. Для проведения измерений используется профиль `tools`; обычный сайт и его контейнеры сами по себе Lighthouse не запускают.
+
+Исходник презентационной схемы в формате D2: [benchmark-overview.d2](./benchmark-overview.d2). Его можно открыть в [D2 Playground](https://play.d2lang.com/).
+
 ## Lighthouse Performance Benchmarks
 
 Рекомендуемый способ — Chromium внутри Docker. Он не зависит от локальной установки Chrome и проверяет все сочетания фреймворка, режима рендеринга, сетевого профиля и нагрузки: **9 × 3 × 3 конфигурации с 20 повторами = 1 620 запусков Lighthouse**. Полный эксперимент может выполняться долго.
 
 В Lighthouse workflow GitHub Actions выполняется 10 повторов одной конфигурации (`react/csr/fast-4g/light`) для smoke-проверки. Эти результаты загружаются отдельно в `lighthouse-smoke-test`; сохранённый полный набор в `artifacts/lighthouse/` не перезаписывается.
+
+### Как проходит бенчмарк
+
+Каждый запуск измеряет одну комбинацию фреймворка, режима рендеринга, сетевого профиля и нагрузки. Скрипт выполняет Lighthouse в Chromium, проверяет применённый сетевой профиль, сохраняет полный JSON-отчёт и извлекает метрики. После выбранных запусков формируются `samples.json` с измерениями и `summary.json`/`summary.csv` со сводными медианами.
+
+```mermaid
+flowchart TD
+    trigger["Pull request, ручной запуск<br/>или push тега v*"] --> actions["GitHub Actions"]
+    actions --> setup["Checkout + Node.js 22 + npm ci"]
+    setup --> compose["docker compose up --build -d"]
+    compose --> health["Проверка доступности<br/>приложений и Nginx"]
+    health --> runnerBuild["Сборка lighthouse-runner<br/>Chromium + Lighthouse"]
+    runnerBuild --> run["10 запусков одной конфигурации:<br/>React / CSR / fast-4g / light"]
+    run --> check["Проверка настроек сети<br/>и извлечение метрик"]
+    check --> smoke["artifacts/lighthouse-smoke/<br/>отчёты и сводка для CI"]
+    smoke --> upload["Загрузка артефакта<br/>lighthouse-smoke-test"]
+    upload --> stop["Остановка контейнеров"]
+    stop --> tag{"Тег v*?"}
+    tag -->|Нет| done["CI job завершён"]
+    tag -->|Да| package["Упаковка Python-приложения,<br/>Compose и полного набора<br/>из artifacts/lighthouse/"]
+    package --> release["GitHub Release:<br/>lighthouse-benchmark-app.zip"]
+```
+
+В CI запускаются ровно 10 измерений одной smoke-конфигурации; это не выборка первых десяти разных конфигураций. Полный локальный прогон по умолчанию использует 81 комбинацию и 20 повторов на каждую.
 
 ```powershell
 docker compose --profile tools build lighthouse-runner
