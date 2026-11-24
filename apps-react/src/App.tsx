@@ -21,7 +21,7 @@ declare global {
 
 async function loadFeed(): Promise<FeedData> {
   const response = await fetch(
-    '/api/products?limit=12&select=id,title,description,price,rating,brand,category,thumbnail',
+    'http://localhost:3000/api/products?limit=12&select=id,title,description,price,rating,brand,category,thumbnail',
   )
   if (!response.ok) throw new Error(`Products API returned ${response.status}`)
   return response.json() as Promise<FeedData>

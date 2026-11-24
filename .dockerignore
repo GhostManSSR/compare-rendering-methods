@@ -3,4 +3,11 @@
 **/.angular
 **/*.tsbuildinfo
 artifacts
+!artifacts/
+artifacts/*
+!artifacts/lighthouse/
+artifacts/lighthouse/*
+!artifacts/lighthouse/samples.json
+!artifacts/lighthouse/summary.json
+!artifacts/lighthouse/summary.csv
 .git

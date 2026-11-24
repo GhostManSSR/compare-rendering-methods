@@ -1,6 +1,6 @@
 # CSR vs. SSR vs. SSG: React, Vue, and Angular
 
-A performance benchmarking environment for nine rendering configurations of a product catalog containing 12 products. All applications use the same data from `data/products.json`, identical images, and the same layout. Production builds are served through a single Nginx instance under a shared origin.
+Среда для сравнительного тестирования производительности девяти вариантов визуализации каталога, содержащего 12 товаров. Все приложения используют одни и те же данные из файла data/products.json, идентичные изображения и одинаковую верстку. Продакшн-сборки раздаются через единый экземпляр Nginx в рамках общего источника (origin).
 
 ## Requirements
 
@@ -30,6 +30,8 @@ docker compose down
 ## Lighthouse Performance Benchmarks
 
 Рекомендуемый способ — Chromium внутри Docker. Он не зависит от локальной установки Chrome и проверяет все сочетания фреймворка, режима рендеринга, сетевого профиля и нагрузки: **9 × 3 × 3 конфигурации с 20 повторами = 1 620 запусков Lighthouse**. Полный эксперимент может выполняться долго.
+
+В Lighthouse workflow GitHub Actions выполняется по 10 повторов каждой конфигурации (810 запусков) для сокращения времени CI; полный локальный эксперимент по-прежнему запускается с 20 повторами.
 
 ```powershell
 docker compose --profile tools build lighthouse-runner
@@ -65,7 +67,7 @@ docker compose --profile tools run --rm lighthouse-runner
 Remove-Item Env:BENCHMARK_RUNS, Env:BENCHMARK_FRAMEWORKS, Env:BENCHMARK_MODES, Env:BENCHMARK_NETWORK_PROFILES, Env:BENCHMARK_WORKLOADS -ErrorAction SilentlyContinue
 ```
 
-### Recalculating Results Without Rerunning Benchmarks
+### Пересчёт результатов без повторного запуска тестов
 
 Если полные JSON-отчёты для выбранных факторов уже находятся в `artifacts/lighthouse/`, можно пересчитать сводку после изменения логики извлечения метрик:
 
