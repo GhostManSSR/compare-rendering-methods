@@ -73,3 +73,11 @@ services:
         target: /workspace/artifacts
     depends_on:
       - benchmark
+
+  ml-app:
+    profiles: ["ml-app"]
+    build:
+      context: .
+      dockerfile: Dockerfile.ml-app
+    ports:
+      - "${ML_APP_PORT:-8501}:8501"

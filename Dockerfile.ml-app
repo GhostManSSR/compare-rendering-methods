@@ -1,0 +1,11 @@
+FROM python:3.12-slim
+WORKDIR /app
+COPY ml_app/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+COPY ml_app/ ./ml_app/
+COPY artifacts/lighthouse/samples.json ./artifacts/lighthouse/samples.json
+COPY artifacts/lighthouse/summary.json ./artifacts/lighthouse/summary.json
+COPY artifacts/lighthouse/summary.csv ./artifacts/lighthouse/summary.csv
+ENV LIGHTHOUSE_ARTIFACTS_DIR=/app/artifacts/lighthouse
+EXPOSE 8501
+CMD ["streamlit", "run", "ml_app/streamlit_app.py", "--server.address=0.0.0.0", "--server.port=8501"]
